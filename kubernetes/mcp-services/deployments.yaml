@@ -1,0 +1,213 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aws-mcp
+  namespace: nexus-mcp
+  labels:
+    app: nexus-mcp
+    component: aws
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nexus-mcp
+      component: aws
+  template:
+    metadata:
+      labels:
+        app: nexus-mcp
+        component: aws
+    spec:
+      serviceAccountName: aws-mcp
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: mcp
+          effect: NoSchedule
+      containers:
+        - name: aws-mcp
+          image: 123456789012.dkr.ecr.us-west-2.amazonaws.com/nexus-mcp-aws:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: AWS_REGION
+              value: us-west-2
+            - name: BEDROCK_MODEL_ID
+              value: amazon.titan-text-lite-v1
+          ports:
+            - containerPort: 8000
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: custom-mcp
+  namespace: nexus-mcp
+  labels:
+    app: nexus-mcp
+    component: custom
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nexus-mcp
+      component: custom
+  template:
+    metadata:
+      labels:
+        app: nexus-mcp
+        component: custom
+    spec:
+      serviceAccountName: custom-mcp
+      containers:
+        - name: custom-mcp
+          image: 123456789012.dkr.ecr.us-west-2.amazonaws.com/nexus-mcp-custom:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "200m"
+              memory: "512Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: database-mcp
+  namespace: nexus-mcp
+  labels:
+    app: nexus-mcp
+    component: database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nexus-mcp
+      component: database
+  template:
+    metadata:
+      labels:
+        app: nexus-mcp
+        component: database
+    spec:
+      serviceAccountName: database-mcp
+      containers:
+        - name: database-mcp
+          image: 123456789012.dkr.ecr.us-west-2.amazonaws.com/nexus-mcp-database:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SQLITE_DB_PATH
+              value: /data/learning.db
+          ports:
+            - containerPort: 8000
+              name: http
+          volumeMounts:
+            - name: sqlite-data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "200m"
+              memory: "512Mi"
+      volumes:
+        - name: sqlite-data
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8s-mcp
+  namespace: nexus-mcp
+  labels:
+    app: nexus-mcp
+    component: k8s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nexus-mcp
+      component: k8s
+  template:
+    metadata:
+      labels:
+        app: nexus-mcp
+        component: k8s
+    spec:
+      serviceAccountName: k8s-mcp
+      containers:
+        - name: k8s-mcp
+          image: 123456789012.dkr.ecr.us-west-2.amazonaws.com/nexus-mcp-k8s:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          ports:
+            - containerPort: 8000
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "400m"
+              memory: "512Mi"

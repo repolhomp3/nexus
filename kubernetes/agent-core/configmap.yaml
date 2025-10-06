@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-core-config
+  namespace: nexus-agent-core
+  labels:
+    app: nexus-agent-core
+    tier: control
+  annotations:
+    nexus.ai/config-version: "v1"
+data:
+  settings.yaml: |
+    aws:
+      region: us-west-2
+    bedrock:
+      modelId: anthropic.claude-3-sonnet-20240229-v1:0
+      preferredModels:
+        - anthropic.claude-3-sonnet-20240229-v1:0
+        - amazon.titan-text-express-v1
+      textGeneration:
+        maxTokenCount: 512
+    mcpEndpoints:
+      aws: http://aws-mcp.nexus-mcp.svc.cluster.local
+      database: http://database-mcp.nexus-mcp.svc.cluster.local
+      custom: http://custom-mcp.nexus-mcp.svc.cluster.local
+      k8s: http://k8s-mcp.nexus-mcp.svc.cluster.local
+    dataPipelines:
+      intakeStream: nexus-dev-intake
+      clientIntakeStream: nexus-dev-client-intake
+      firehose: nexus-dev-to-lake
+      clientFirehose: nexus-dev-client-to-lake
+      telemetryStream: nexus-dev-telemetry
+      clientTelemetryStream: nexus-dev-client-telemetry
+    lake:
+      bronzeBucket: nexus-dev-bronze-us-west-2
+      silverBucket: nexus-dev-silver-us-west-2
+      goldBucket: nexus-dev-gold-us-west-2
+      vibraniumBucket: nexus-dev-vibranium-us-west-2
+    namespaces:
+      mcp: nexus-mcp
+      data: nexus-data

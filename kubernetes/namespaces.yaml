@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nexus-agent-core
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nexus-mcp
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nexus-data

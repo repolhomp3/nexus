@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-core
+  namespace: nexus-agent-core
+  labels:
+    app: nexus-agent-core
+    component: orchestrator
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nexus-agent-core
+      component: orchestrator
+  template:
+    metadata:
+      labels:
+        app: nexus-agent-core
+        component: orchestrator
+    spec:
+      serviceAccountName: agent-orchestrator
+      containers:
+        - name: agent-core
+          image: 123456789012.dkr.ecr.us-west-2.amazonaws.com/nexus-agent-core:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - /app/agent-core.py
+          args:
+            - --config=/app/config/settings.yaml
+          env:
+            - name: AWS_REGION
+              value: us-west-2
+          ports:
+            - containerPort: 8000
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: agent-core-config
+            items:
+              - key: settings.yaml
+                path: settings.yaml

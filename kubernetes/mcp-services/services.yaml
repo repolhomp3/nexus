@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: aws-mcp
+  namespace: nexus-mcp
+  labels:
+    app: nexus-mcp
+    component: aws
+spec:
+  selector:
+    app: nexus-mcp
+    component: aws
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: custom-mcp
+  namespace: nexus-mcp
+  labels:
+    app: nexus-mcp
+    component: custom
+spec:
+  selector:
+    app: nexus-mcp
+    component: custom
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: database-mcp
+  namespace: nexus-mcp
+  labels:
+    app: nexus-mcp
+    component: database
+spec:
+  selector:
+    app: nexus-mcp
+    component: database
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8s-mcp
+  namespace: nexus-mcp
+  labels:
+    app: nexus-mcp
+    component: k8s
+spec:
+  selector:
+    app: nexus-mcp
+    component: k8s
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

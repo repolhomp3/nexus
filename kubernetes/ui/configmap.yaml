@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nexus-ui-config
+  namespace: nexus-agent-core
+  labels:
+    app: nexus-ui
+  annotations:
+    nexus.ai/config-version: "v0"
+data:
+  API_GATEWAY_URL: https://example.execute-api.us-west-2.amazonaws.com/prod
+  MAP_STYLE: mapbox://styles/mapbox/light-v11
