@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drone-simulator
+  namespace: nexus-data
+  labels:
+    app: drone-simulator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: drone-simulator
+  template:
+    metadata:
+      labels:
+        app: drone-simulator
+    spec:
+      serviceAccountName: drone-simulator
+      containers:
+        - name: drone-simulator
+          image: 123456789012.dkr.ecr.us-west-2.amazonaws.com/nexus-drone-simulator:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: AWS_REGION
+              value: us-west-2
+            - name: DRONE_STREAM
+              value: nexus-dev-client-intake
+            - name: DRONE_ID
+              value: drone-alpha
+            - name: DRONE_SAMPLE_RATE
+              value: "2"

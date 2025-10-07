@@ -75,7 +75,8 @@ resource "aws_iam_policy" "agent_data_access" {
         ]
         Resource = [
           aws_kinesis_stream.intake.arn,
-          aws_kinesis_stream.client_intake.arn
+          aws_kinesis_stream.client_intake.arn,
+          aws_kinesis_stream.processed.arn
         ]
       },
       {
@@ -161,7 +162,7 @@ resource "aws_iam_role" "aws_mcp_irsa" {
 
 resource "aws_iam_policy" "aws_mcp_access" {
   name        = "${local.name_prefix}-aws-mcp"
-  description = "Allow the AWS MCP service to interact with S3, Glue, and Bedrock."
+  description = "Allow the AWS MCP service to interact with S3, Glue, Bedrock, and Kinesis streams."
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -192,15 +193,36 @@ resource "aws_iam_policy" "aws_mcp_access" {
       {
         Effect = "Allow"
         Action = [
+          "glue:GetDatabase",
+          "glue:GetDatabases",
+          "glue:GetTable",
+          "glue:GetTables",
+          "glue:GetJob",
           "glue:GetJobs",
           "glue:StartJobRun",
           "glue:GetJobRun"
         ]
         Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "kinesis:DescribeStream",
+          "kinesis:GetShardIterator",
+          "kinesis:GetRecords",
+          "kinesis:PutRecord",
+          "kinesis:PutRecords"
+        ]
+        Resource = [
+          aws_kinesis_stream.intake.arn,
+          aws_kinesis_stream.client_intake.arn,
+          aws_kinesis_stream.processed.arn
+        ]
       }
     ]
   })
 }
+
 
 resource "aws_iam_role_policy_attachment" "aws_mcp_attach" {
   role       = aws_iam_role.aws_mcp_irsa.name

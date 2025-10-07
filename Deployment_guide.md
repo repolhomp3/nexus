@@ -99,7 +99,7 @@ Terraform does not build application images; use Docker to package services. Rep
 
 2. **Create ECR repositories** (run once)
    ```bash
-   for repo in nexus-agent-core nexus-mcp-aws nexus-mcp-custom nexus-mcp-database nexus-mcp-k8s nexus-ui; do
+   for repo in nexus-agent-core nexus-mcp-aws nexus-mcp-custom nexus-mcp-database nexus-mcp-k8s nexus-ui nexus-drone-simulator nexus-kinesis-opensearch; do
      aws ecr create-repository --repository-name $repo --image-scanning-configuration scanOnPush=true --region us-west-2 --profile nexus || true
    done
    ```
@@ -116,6 +116,8 @@ Terraform does not build application images; use Docker to package services. Rep
    - `services/mcp/custom`
    - `services/mcp/database`
    - `services/mcp/k8s`
+   - `services/data-pipeline/kinesis-opensearch`
+   - `services/simulators/dji-drone`
    - UI build context (e.g., `kubernetes/ui` or a dedicated front-end directory)
 
 4. **Update manifests**
@@ -128,6 +130,7 @@ Terraform does not build application images; use Docker to package services. Rep
 Terraform outputs IAM roles but Kubernetes manifests contain placeholders. Update:
 - `kubernetes/agent-core/serviceaccount.yaml`
 - `kubernetes/mcp-services/serviceaccount.yaml`
+- `kubernetes/data-plane/serviceaccounts.yaml`
 
 Example using `yq`:
 ```bash
@@ -138,6 +141,7 @@ yq -i 'select(.metadata.name=="aws-mcp").metadata.annotations["eks.amazonaws.com
   kubernetes/mcp-services/serviceaccount.yaml
 ```
 Ensure the annotation values match the actual role names created by Terraform.
+Apply the same role ARN updates to `kubernetes/data-plane/serviceaccounts.yaml` so the drone simulator and Kinesis->OpenSearch worker inherit the correct AWS permissions.
 
 ---
 
@@ -158,11 +162,13 @@ Ensure the annotation values match the actual role names created by Terraform.
    kubectl get ns nexus-agent-core nexus-mcp nexus-data
    kubectl get pods -n nexus-agent-core
    kubectl get pods -n nexus-mcp
+   kubectl get pods -n nexus-data
    ```
 
 4. **Inspect key workloads**
    - Agent Core logs: `kubectl logs deploy/agent-core -n nexus-agent-core`
    - MCP services: `kubectl get svc -n nexus-mcp`
+   - OpenSearch service: `kubectl get svc -n nexus-observability`
    - UI service: `kubectl get svc nexus-ui -n nexus-agent-core`
 
 5. **(Optional) Local workflow test**
@@ -178,7 +184,7 @@ Ensure the annotation values match the actual role names created by Terraform.
 ## 7. Integrate UI with API Gateway
 
 1. Retrieve the API invoke URL (`terraform output ui_api_gateway_url`).
-2. Update `kubernetes/ui/configmap.yaml` → `API_GATEWAY_URL`.
+2. Update `kubernetes/ui/configmap.yaml` -> `API_GATEWAY_URL`.
 3. Apply the ConfigMap and restart the deployment:
    ```bash
    kubectl apply -f kubernetes/ui/configmap.yaml
@@ -203,11 +209,15 @@ Ensure the annotation values match the actual role names created by Terraform.
 5. **Lake Formation** – Validate data location registration and administrator access via the AWS console.
 6. **UI access** – Access the UI (via port-forward, LoadBalancer, or Ingress) and verify authenticated workflows.
 
+7. **OpenSearch indexing** – Hit `http://<opensearch-lb>:9200/drone-events/_search` (or port-forward the service) and confirm documents with `normalized.latitude/longitude` values are present.
+8. **Autoscaling** – Inspect the KEDA scaled object (`kubectl describe scaledobject kinesis-opensearch-scaler -n nexus-data`) and verify replica counts change under simulated load.
+
 ---
 
 ## 9. Operational Hardening (Recommended)
 - Replace the sample Lambda token service with Amazon Cognito, IAM Identity Center, or OIDC for managed identity, signing, and revocation.
 - Store sensitive config (API tokens, map keys) in AWS Secrets Manager or Parameter Store and mount via something like External Secrets Operator.
+- Harden OpenSearch (TLS, fine-grained RBAC, snapshots) before exposing dashboards outside the cluster.
 - Enable AWS CloudTrail, Config, and GuardDuty for compliance monitoring; consider AWS Security Hub for centralized findings.
 - Instrument services with Prometheus metrics and export to Amazon Managed Prometheus or CloudWatch metrics. Monitor both primary and client Kinesis/Firehose channels.
 - Configure CI/CD pipelines to automate Terraform plans/applies, container builds, and Kubernetes deployments (e.g., GitHub Actions, CodePipeline, Argo CD).
@@ -230,7 +240,7 @@ Ensure the annotation values match the actual role names created by Terraform.
 
 3. **Delete ECR repositories** *(optional)*
    ```bash
-   for repo in nexus-agent-core nexus-mcp-aws nexus-mcp-custom nexus-mcp-database nexus-mcp-k8s nexus-ui; do
+   for repo in nexus-agent-core nexus-mcp-aws nexus-mcp-custom nexus-mcp-database nexus-mcp-k8s nexus-ui nexus-drone-simulator nexus-kinesis-opensearch; do
      aws ecr delete-repository --repository-name $repo --force --region us-west-2 --profile nexus || true
    done
    ```

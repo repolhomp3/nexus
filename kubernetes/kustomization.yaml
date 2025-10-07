@@ -13,3 +13,12 @@ resources:
   - ui/configmap.yaml
   - ui/deployment.yaml
   - ui/service.yaml
+  - data-plane/serviceaccounts.yaml
+  - data-plane/opensearch-credentials.yaml
+  - data-plane/drone-simulator.yaml
+  - data-plane/kinesis-opensearch.yaml
+  - autoscaling/keda-scaledobject.yaml
+  - opensearch/namespace.yaml
+  - opensearch/secret.yaml
+  - opensearch/statefulset.yaml
+  - opensearch/service.yaml

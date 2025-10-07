@@ -31,9 +31,9 @@ This document describes the Project Nexus architecture, component responsibiliti
 
 ### 2.2 Identity & Access
 - **IAM Roles for Service Accounts (IRSA)**
-  - `nexus-agent-core/agent-orchestrator` → `aws_iam_role.agent_irsa`
+  - `nexus-agent-core/agent-orchestrator` -> `aws_iam_role.agent_irsa`
     - Permissions: Bedrock invoke/list, Kinesis (primary + client streams), Firehose (primary + client), S3 medallion buckets (Get/List/Put).
-  - `nexus-mcp/aws-mcp` → `aws_iam_role.aws_mcp_irsa`
+  - `nexus-mcp/aws-mcp` -> `aws_iam_role.aws_mcp_irsa`
     - Permissions: Bedrock invoke/list, Glue job operations, S3 list, Lake buckets.
 - **Lambda Execution Role** for authentication/token function (CloudWatch logs, Secrets Manager reads, STS assume role).
 - **Bearer Token Role** (`aws_iam_role.kinesis_bearer`)
@@ -51,6 +51,7 @@ This document describes the Project Nexus architecture, component responsibiliti
 - **Amazon Kinesis Firehose Delivery Streams**
   - `${prefix}-to-lake`: Sources the primary Data Stream, delivers GZIP-compressed objects to S3 bronze.
   - `${prefix}-client-to-lake`: Sources the client Data Stream, writes to S3 bronze under `client/` prefix.
+- **Processed Kinesis Stream** `${prefix}-processed` – Silver-tier stream carrying normalized drone events ready for downstream consumers (KEDA scaler monitors its lag).
 - **Amazon S3 (Medallion Architecture)**
   - Bronze (`${prefix}-bronze-${region}`) – raw immutable data (including Firehose client prefix).
   - Silver (`${prefix}-silver-${region}`) – cleansed & structured outputs.
@@ -75,7 +76,10 @@ This document describes the Project Nexus architecture, component responsibiliti
   - Services: ClusterIPs for each MCP deployment, port 80 -> container 8000.
   - ServiceAccounts: discrete accounts per MCP service, enabling least-privilege policies.
 - **Namespace `nexus-data`**
-  - Reserved for future data-processing workloads (Glue jobs, Spark, etc.).
+  - Deployment `drone-simulator`: Synthetic DJI-style producer emitting telemetry into the client intake stream.
+  - Deployment `kinesis-opensearch`: Reads the processed stream and indexes events into OpenSearch.
+  - ServiceAccounts annotated with IRSA (reuse agent role by default) so KEDA can scale worker pods with the pod identity.
+  - Secrets: OpenSearch credentials mirrored for in-cluster consumers.
 
 ### 2.5 Edge & Experience
 - **Amazon API Gateway v2 (HTTP API)** `${prefix}-ui`
@@ -95,6 +99,12 @@ This document describes the Project Nexus architecture, component responsibiliti
   - `/aws/apigateway/${prefix}-ui`
 - **Agent Core Metrics**
   - Exposes placeholder Prometheus-style metrics on `/metrics` (expand as needed).
+- **OpenSearch Deployment**
+  - Single-node StatefulSet in `nexus-observability` namespace, exposed via LoadBalancer for dashboards. Credentials published as Kubernetes Secrets referenced by worker pods.
+
+### 2.7 Autoscaling
+- **Karpenter** – EKS module configures Karpenter for node-level elasticity, targeting workloads tainted `dedicated=mcp`.
+- **KEDA** – Helm-installed into the `keda` namespace. `ScaledObject` in `nexus-data` scales the `kinesis-opensearch` deployment using stream lag so indexing keeps pace with ingest.
 
 ---
 
@@ -110,7 +120,13 @@ This document describes the Project Nexus architecture, component responsibiliti
 1. Internal sources push events to **Kinesis Data Stream `${prefix}-intake`**; video/sensor payloads to **Kinesis Video Stream `${prefix}-telemetry`**.
 2. **Kinesis Firehose `${prefix}-to-lake`** consumes the primary stream and lands output in the bronze bucket root.
 
-### 3.3 Orchestration & Processing
+### 3.3 Agentic Normalization to Silver Stream
+1. Synthetic (or real) drone payloads enter the platform via the client intake stream. The Agent Core detects a `drone` workflow request and calls the AWS MCP `process_drone_event` tool.
+2. AWS MCP consults the Glue Data Catalog (`{DRONE_GLUE_DATABASE}.{DRONE_GLUE_TABLE}`) to reconcile the schema, constructs a normalized record (latitude/longitude/altitude, sensor snapshot, timestamps), and publishes it to the `${prefix}-processed` Kinesis stream.
+3. Agent Core can optionally invoke Bedrock to summarize anomalies or mission insights before storing metadata in higher medallion tiers.
+4. KEDA monitors lag on `${prefix}-processed` to elastically scale the downstream indexing worker.
+
+### 3.4 Orchestration & Processing
 1. **Agent Core** consumes stream events (primary channel), reads configuration from the ConfigMap, and orchestrates workflows.
 2. Depending on the workflow:
    - Calls **AWS MCP** for infrastructure-aware actions (S3 bucket inventory, Glue jobs, Bedrock inference with service-specific credentials).
@@ -120,12 +136,17 @@ This document describes the Project Nexus architecture, component responsibiliti
 3. Agent Core may also invoke **Amazon Bedrock** directly using its IRSA role and configured model IDs (e.g., `anthropic.claude-3-sonnet-20240229-v1:0`, `amazon.titan-text-express-v1`).
 4. MCP responses and Bedrock outputs feed back into the agent workflow. Results are serialized as JSON payloads and may be written back to the data lake via MCP services.
 
-### 3.4 Lake Formation & Medallion Advancement
+### 3.5 Lake Formation & Medallion Advancement
 1. Processed outputs are written by MCP services or downstream pipelines into the **Silver** bucket (cleansed datasets) and **Gold** bucket (aggregated intelligence).
 2. High-confidence, curated insights land in the **Vibranium** bucket, ready for dissemination to mission partners.
 3. Lake Formation policies ensure only authorized principals can read/write specific tiers. Administrators add data catalogs, databases, or tables referencing these buckets for analytics services (Athena, Glue Data Catalog, Redshift Spectrum).
 
-### 3.5 Dissemination & UI Experience
+### 3.6 OpenSearch Indexing
+1. The `kinesis-opensearch` deployment consumes `${prefix}-processed` using the pod IAM role (leveraging KEDA for scale).
+2. Each record is indexed into the `drone-events` OpenSearch index, preserving the normalized payload and original raw event for debugging.
+3. Dashboards (map overlays, tables) query OpenSearch via the LoadBalancer endpoint and render drone locations, speeds, and alerts in near-real time.
+
+### 3.7 Dissemination & UI Experience
 1. **Nexus UI** retrieves authentication tokens via API Gateway + Lambda.
 2. Authenticated sessions allow operators to request data views, configure source/destination mappings, and launch workflows.
 3. MCP dissemination services push results to external systems (extendable pattern).
@@ -138,23 +159,26 @@ This document describes the Project Nexus architecture, component responsibiliti
 When drafting architecture diagrams, depict the following interaction sets:
 
 1. **Edge Authentication Flow**
-   - User → API Gateway → Lambda Auth (STS AssumeRole) → returns bearer payload → User uses STS credentials to call Kinesis Data/Video Streams and Firehose.
+   - User -> API Gateway -> Lambda Auth (STS AssumeRole) -> returns bearer payload -> User uses STS credentials to call Kinesis Data/Video Streams and Firehose.
 
 2. **Client Streaming Pipeline**
-   - Producers → Kinesis Data Stream `${prefix}-client-intake` → Firehose `${prefix}-client-to-lake` → S3 Bronze (`client/` prefix) → Lake Formation.
-   - Producers (video) → Kinesis Video Stream `${prefix}-client-telemetry` → downstream analytics.
+   - Producers -> Kinesis Data Stream `${prefix}-client-intake` -> Firehose `${prefix}-client-to-lake` -> S3 Bronze (`client/` prefix) -> Lake Formation.
+   - Producers (video) -> Kinesis Video Stream `${prefix}-client-telemetry` -> downstream analytics.
 
 3. **Internal Streaming Pipeline**
-   - Internal producers → Kinesis Data Stream `${prefix}-intake` → Firehose `${prefix}-to-lake` → S3 Bronze → Lake Formation.
+   - Internal producers -> Kinesis Data Stream `${prefix}-intake` -> Firehose `${prefix}-to-lake` -> S3 Bronze -> Lake Formation.
 
 4. **Control Plane Workflow**
    - Agent Core (EKS) ↔ MCP Services (AWS/Custom/Database/K8s) via ClusterIP services.
-   - Agent Core → Bedrock (via IRSA) for inference.
+   - Agent Core -> Bedrock (via IRSA) for inference.
 
-5. **Data Promotion**
-   - Bronze → Silver → Gold → Vibranium S3 buckets (medallion flow) with Lake Formation policy enforcement.
+5. **Silver Stream -> OpenSearch**
+   - Kinesis processed stream feeds the `kinesis-opensearch` deployment, which bulk indexes documents into OpenSearch for map dashboards.
 
-6. **Observability & IAM**
+6. **Data Promotion**
+   - Bronze -> Silver -> Gold -> Vibranium S3 buckets (medallion flow) with Lake Formation policy enforcement.
+
+7. **Observability & IAM**
    - CloudWatch log groups for API, Lambda, Firehose (primary + client).
    - IAM relationships: Lambda execution role assumes bearer role; IRSA bindings map Kubernetes service accounts to IAM roles.
 
@@ -163,6 +187,7 @@ When drafting architecture diagrams, depict the following interaction sets:
 ## 5. Scaling & Availability Considerations
 - **Kinesis Shards** – Scale both primary and client streams based on ingest throughput; adjust Firehose buffering parameters to meet latency SLAs.
 - **EKS Node Groups** – General workloads run on default group; MCP-specific workloads can be isolated via taints/tolerations. Karpenter (optional) elastically provisions nodes.
+- **KEDA Operator health** – Monitor scaler metrics and lag thresholds to ensure the OpenSearch worker scales appropriately, avoiding hotspot shards.
 - **Bedrock** – Managed service; monitor invocation quotas and apply model-specific guardrails.
 - **Data Lake** – Leverage S3 lifecycle policies for cost management; optional replication for DR scenarios.
 - **API Layer** – API Gateway is multi-AZ; Lambda scales automatically. UI replicas set via Kubernetes Deployment.

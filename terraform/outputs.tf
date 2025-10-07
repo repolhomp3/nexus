@@ -22,3 +22,8 @@ output "mcp_namespace" {
   description = "Kubernetes namespace hosting MCP services."
   value       = local.kubernetes_namespaces["mcp_services"]
 }
+
+output "processed_stream_name" {
+  description = "Name of the processed (silver) Kinesis data stream."
+  value       = aws_kinesis_stream.processed.name
+}

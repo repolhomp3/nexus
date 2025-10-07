@@ -1,0 +1,19 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: kinesis-opensearch-scaler
+  namespace: nexus-data
+spec:
+  scaleTargetRef:
+    name: kinesis-opensearch
+  pollingInterval: 30
+  cooldownPeriod: 120
+  minReplicaCount: 1
+  maxReplicaCount: 5
+  triggers:
+    - type: aws-kinesis-stream
+      metadata:
+        streamName: nexus-dev-processed
+        shardCount: "1"
+        awsRegion: us-west-2
+        identityOwner: pod

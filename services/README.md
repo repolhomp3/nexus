@@ -9,5 +9,7 @@ Python sources for workloads deployed via the Kubernetes manifests.
 - `mcp/custom/` – Example MCP providing key-value storage and weather enrichment.
 - `mcp/database/` – SQLite-backed MCP for executing SQL queries.
 - `mcp/k8s/` – Kubernetes MCP for cluster introspection and actions.
+- `data-pipeline/kinesis-opensearch/` – Worker that streams processed Kinesis events into OpenSearch.
+- `simulators/dji-drone/` – Synthetic DJI-style drone data producer feeding the client intake stream.
 
 Each folder includes a minimal `requirements.txt` to seed container images. Build and publish container artifacts that execute the corresponding `*-server.py` or `agent-core.py` entrypoints.

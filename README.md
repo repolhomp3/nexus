@@ -21,10 +21,12 @@ Project Nexus delivers an AI-driven, cloud-native platform for ingesting, transl
 
 ## Key Capabilities
 - **Token-mediated streaming ingress** – API Gateway + Lambda mint short-lived bearer tokens (backed by STS credentials) that grant producers/consumers controlled access to dedicated Kinesis Data and Video Streams. Firehose automatically lands authenticated data in the bronze medallion tier.
+- **Adaptive compute** – Karpenter expands the node pool on demand while KEDA scales the Kinesis-to-OpenSearch workers based on stream lag, ensuring the platform keeps pace with bursty ingest workloads.
 - **Agentic control plane** built around the Nexus Agent Core which invokes Bedrock models and coordinates MCP services for AWS, custom analytics, database access, and Kubernetes automation.
 - **Multi-service MCP fabric** deployed on Amazon EKS, enabling modular tools for data transformation, dissemination, and cluster operations.
 - **Authentication edge** via Amazon API Gateway backed by a Python Lambda (pluggable with future Cognito/OIDC providers) and a configurable front-end UI.
 - **Infrastructure as Code** defined in Terraform to provision networking, IAM, observability, and compute resources in AWS us-west-2.
+- **Map-ready analytics** – Synthetic DJI-style telemetry is normalized via the AWS MCP workflow, streamed onto a silver-tier Kinesis stream, and indexed in OpenSearch for geospatial dashboards.
 
 ---
 
@@ -40,6 +42,7 @@ High-level flow:
 2. Kinesis Firehose (primary and client channels) delivers raw records into the bronze S3 bucket; Lake Formation governs downstream access to refined tiers.
 3. The Agent Core consumes stream events, invokes MCP services (AWS, custom analytics, database queries, Kubernetes actions), and uses Bedrock models for reasoning or summarization.
 4. Outputs land in silver/gold/vibranium buckets and can be disseminated to downstream systems via MCP dissemination services and the UI.
+5. The kinesis-opensearch worker consumes the silver stream and indexes events into the OpenSearch cluster for map-based visualization.
 
 Detailed component and data-flow descriptions are documented in `Architecture.md`.
 
@@ -49,7 +52,11 @@ Detailed component and data-flow descriptions are documented in `Architecture.md
 ```
 terraform/           # AWS infrastructure-as-code
 kubernetes/          # Kustomize manifests for EKS deployments
-services/            # Python sources for agent core + MCP services
+services/            # Python sources for the agent core, MCP services, processors, and simulators
+├─ agent-core/
+├─ data-pipeline/kinesis-opensearch/
+├─ mcp/
+└─ simulators/dji-drone/
 lambda/              # Lambda auth function packaged by Terraform
 ├─ auth/
 └─ dist/             # Terraform-generated ZIP (ignored)
@@ -66,7 +73,7 @@ Supporting documentation:
 - **Network** – VPC with three AZs, public/private subnets, NAT gateway, DNS support.
 - **EKS Cluster** – Two managed node groups (general workloads and MCP-tolerated nodes) and optional Karpenter integration.
 - **IAM** – IRSA roles for the agent core and AWS MCP service (Bedrock, Glue, S3, Kinesis permissions), Lambda execution roles, Firehose role/policies, and a bearer-token role assumed by Lambda to mint limited Kinesis credentials.
-- **Medallion Data Lake** – Versioned, AES256-encrypted S3 buckets (bronze → vibranium) registered with Lake Formation.
+- **Medallion Data Lake** – Versioned, AES256-encrypted S3 buckets (bronze -> vibranium) registered with Lake Formation.
 - **Streaming Services** –
   - Primary channel: Kinesis Data Stream (`*-intake`), Video Stream (`*-telemetry`), Firehose (`*-to-lake`).
   - Client channel: Kinesis Data Stream (`*-client-intake`), Video Stream (`*-client-telemetry`), Firehose (`*-client-to-lake`) landing in the bronze bucket under the `client/` prefix.
@@ -77,13 +84,28 @@ Supporting documentation:
 - **Agent Core** – Deployment, ConfigMap, Service; mounts YAML config describing Bedrock models, MCP endpoints, and both primary/client pipeline resources.
 - **MCP Services** – Four deployments (AWS, custom, database, Kubernetes) each with service accounts, probes, and services for internal discovery.
 - **UI** – Deployment + ConfigMap for API URL and map styling, Service for internal access (fronted via API Gateway/LB integration in future).
+- **Data plane** – Drone simulator, Kinesis->OpenSearch worker, KEDA scaled object, and OpenSearch manifests live under `data-plane/`, `autoscaling/`, and `opensearch/`.
 
 ### Python Services (`services/`)
 - **Agent Core** – Configurable orchestrator invoking Bedrock and MCP tools; provides HTTP API for workflow execution and health endpoints.
-- **AWS MCP** – Wraps S3, Bedrock, and Glue operations with IRSA credentials.
+- **AWS MCP** – Wraps S3, Bedrock, and Glue operations with IRSA credentials and now exposes the `process_drone_event` tool.
 - **Custom MCP** – Provides key-value storage and external weather enrichment (demonstration of arbitrary tools).
 - **Database MCP** – Exposes SQLite-backed SQL execution.
 - **Kubernetes MCP** – Uses in-cluster RBAC to list pods, scale deployments, and troubleshoot workloads.
+- **Kinesis -> OpenSearch worker** – Streams silver-tier events into OpenSearch to power map dashboards.
+- **DJI drone simulator** – Emits synthetic telemetry into the client intake stream for end-to-end testing.
+
+### Autoscaling (Karpenter & KEDA)
+- **Karpenter** – Provisioner managed via Terraform (enable with `enable_karpenter`) to burst worker nodes based on pending pods labeled/tainted for MCP workloads.
+- **KEDA** – Installed via Helm; the `ScaledObject` scales the `kinesis-opensearch` Deployment using the backlog depth of the processed Kinesis stream.
+
+### Observability & Visualization
+- **OpenSearch** – StatefulSet exposed via LoadBalancer in the `nexus-observability` namespace for map/table dashboards.
+- **Indexing pipeline** – `kinesis-opensearch` Deployments ship normalized drone data into the `drone-events` index for geospatial visualization.
+
+### Synthetic & Translational Workloads
+- **Drone simulator** – Synthetic producer mimicking a DJI drone to populate the client intake stream.
+- **Agentic workflow** – Agent Core invokes the AWS MCP `process_drone_event` tool, leveraging Glue catalog metadata to normalize payloads and push silver-tier events onto the processed stream.
 
 ### Lambda Auth (`lambda/auth`)
 - Issues bearer tokens containing temporary AWS credentials (STS) scoped to the client Kinesis Data/Video streams and Firehose delivery stream.
@@ -101,6 +123,9 @@ Supporting documentation:
 | IAM Role ARNs | Terraform outputs (`aws_iam_role.agent_irsa`, `aws_iam_role.aws_mcp_irsa`) | Patch into service-account annotations before applying manifests. |
 | Client Bearer Role | Terraform output/state (`aws_iam_role.kinesis_bearer`) | Lambda assumes this role to mint tokens; adjust policy scope as required. |
 | Stream Names | Lambda env + `kubernetes/agent-core/configmap.yaml` | Update if you customize stream naming conventions. |
+| Processed stream | `terraform/data_platform.tf`, `kubernetes/agent-core/configmap.yaml`, `kubernetes/data-plane/kinesis-opensearch.yaml` | Silver-tier stream consumed by the OpenSearch worker and KEDA scaler. |
+| OpenSearch credentials | `kubernetes/opensearch/secret.yaml`, `kubernetes/data-plane/opensearch-credentials.yaml` | Rotate secrets prior to production. |
+| KEDA scaler | `kubernetes/autoscaling/keda-scaledobject.yaml` | Adjust min/max replicas, stream name, and region as needed. |
 | UI/API endpoint | `kubernetes/ui/configmap.yaml` | Set to Terraform `ui_api_gateway_url` output. |
 | Map Telemetry | `kubernetes/mcp-services/configmap.yaml` & UI ConfigMap | Configure map style identifiers or tokens. |
 
@@ -123,6 +148,7 @@ Operational configuration is primarily driven through ConfigMaps and Terraform v
 - **Logging** – Ensure Firehose, Lambda, and application logs ship to CloudWatch; consider OpenSearch or S3-based analytics for long-term retention.
 - **Backup/DR** – Bronze/Silver/Gold buckets are versioned; evaluate cross-region replication if RPO/RTO requirements demand it.
 - **Cost Management** – Monitor shard counts for both Kinesis streams, Firehose buffering intervals, EKS node group sizing, and Bedrock inference usage.
+- **Autoscaling** – Track KEDA metrics (`keda_metrics_adapter_scaled_object_lag`) and Karpenter provisioner activity to ensure the silver pipeline keeps up with ingestion.
 - **CI/CD** – Automate Terraform plans, image builds (e.g., CodeBuild/GitHub Actions), and `kubectl apply -k` or GitOps pipelines (Argo CD/Flux).
 - **Testing** – Incorporate integration tests that exercise MCP APIs, token issuance, and streaming ingestion (e.g., k6, Locust, or custom scripts).
 

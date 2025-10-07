@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kinesis-opensearch
+  namespace: nexus-data
+  labels:
+    app: kinesis-opensearch
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kinesis-opensearch
+  template:
+    metadata:
+      labels:
+        app: kinesis-opensearch
+    spec:
+      serviceAccountName: kinesis-opensearch
+      containers:
+        - name: kinesis-opensearch
+          image: 123456789012.dkr.ecr.us-west-2.amazonaws.com/nexus-kinesis-opensearch:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: AWS_REGION
+              value: us-west-2
+            - name: PROCESSED_STREAM
+              value: nexus-dev-processed
+            - name: OPENSEARCH_ENDPOINT
+              value: http://opensearch.nexus-observability.svc.cluster.local:9200
+            - name: OPENSEARCH_INDEX
+              value: drone-events
+            - name: OPENSEARCH_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: opensearch-credentials
+                  key: username
+            - name: OPENSEARCH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: opensearch-credentials
+                  key: password

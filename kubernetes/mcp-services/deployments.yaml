@@ -33,6 +33,12 @@ spec:
               value: us-west-2
             - name: BEDROCK_MODEL_ID
               value: amazon.titan-text-lite-v1
+            - name: DRONE_GLUE_DATABASE
+              value: nexus_observations
+            - name: DRONE_GLUE_TABLE
+              value: drone_catalog
+            - name: DRONE_PROCESSED_STREAM
+              value: nexus-dev-processed
           ports:
             - containerPort: 8000
               name: http

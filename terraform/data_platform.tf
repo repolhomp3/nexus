@@ -141,6 +141,18 @@ resource "aws_kinesis_video_stream" "client_telemetry" {
   tags = local.common_tags
 }
 
+resource "aws_kinesis_stream" "processed" {
+  name             = "${local.name_prefix}-processed"
+  shard_count      = 1
+  retention_period = 24
+
+  stream_mode_details {
+    stream_mode = "PROVISIONED"
+  }
+
+  tags = merge(local.common_tags, { DataTier = "silver" })
+}
+
 resource "aws_iam_role" "firehose" {
   name               = "${local.name_prefix}-firehose"
   assume_role_policy = jsonencode({

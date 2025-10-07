@@ -37,6 +37,7 @@ class AgentCoreConfig:
         "custom": "http://custom-mcp.nexus-mcp.svc.cluster.local",
         "k8s": "http://k8s-mcp.nexus-mcp.svc.cluster.local",
     })
+    data_pipelines: Dict[str, str] = field(default_factory=dict)
 
 
 def load_config(path: Optional[str]) -> AgentCoreConfig:
@@ -74,6 +75,10 @@ def load_config(path: Optional[str]) -> AgentCoreConfig:
     if isinstance(endpoints, dict):
         config.mcp_endpoints.update({k: v for k, v in endpoints.items() if v})
 
+    pipelines = payload.get("dataPipelines") or {}
+    if isinstance(pipelines, dict):
+        config.data_pipelines.update({k: str(v) for k, v in pipelines.items() if v})
+
     return config
 
 
@@ -83,6 +88,7 @@ class AgentCore:
         region = os.getenv("AWS_REGION", config.region)
         self.bedrock = boto3.client("bedrock-runtime", region_name=region)
         self.mcp_endpoints = config.mcp_endpoints
+        self.data_pipelines = config.data_pipelines
         self.max_token_count = config.bedrock.max_token_count
         self.model_id = config.bedrock.model_id
 
@@ -201,6 +207,32 @@ class AgentCore:
                 return {"error": "pod_name required for troubleshooting"}
             result = self.call_mcp_tool("k8s", "get_cluster_status", {})
             return {"workflow": "k8s_general", "result": result}
+
+        if "drone" in task.lower():
+            event = workflow.get("event") or {}
+            if not isinstance(event, dict):
+                return {"error": "event must be provided as an object"}
+            partition_key = workflow.get("partition_key") or event.get("droneId") or "nexus-drone"
+            transform_result = self.call_mcp_tool(
+                "aws",
+                "process_drone_event",
+                {"payload": event, "partitionKey": partition_key},
+            )
+            if "error" in transform_result:
+                return {"workflow": "drone_ingest", "error": transform_result["error"]}
+            summary_prompt = (
+                "Summarize this drone telemetry for an ops console, highlighting key metrics: "
+                f"{transform_result}"
+            )
+            summary = self.invoke_bedrock(summary_prompt)
+            return {
+                "workflow": "drone_ingest",
+                "steps": [
+                    {"step": "normalize", "result": transform_result},
+                    {"step": "bedrock_summary", "result": summary},
+                ],
+                "outputStream": self.data_pipelines.get("processedStream"),
+            }
 
         if "glue" in task.lower():
             if "start" in task.lower():
